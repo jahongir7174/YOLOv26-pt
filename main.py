@@ -18,7 +18,7 @@ from nets import nn
 from utils import util
 from utils.dataset import Dataset
 
-data_dir = '/home/jahongir/Projects/Dataset/COCO'
+data_dir = '../Dataset/COCO'
 
 
 def learning_rate(args, params):
