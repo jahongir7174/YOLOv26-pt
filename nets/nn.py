@@ -104,14 +104,14 @@ class CSPModule(torch.nn.Module):
 
 
 class CSP(torch.nn.Module):
-    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, attn=False, add=True):
+    def __init__(self, c1, c2, n=1, csp=False, e=0.5, attn=False, add=True):
         super().__init__()
         self.conv1 = Conv(c1, 2 * int(c2 * e), torch.nn.SiLU())
         self.conv2 = Conv((2 + n) * int(c2 * e), c2, torch.nn.SiLU())
 
         modules = []
         for _ in range(n):
-            if c3k:
+            if csp:
                 if attn:
                     modules.append(torch.nn.Sequential(Residual(int(c2 * e), int(c2 * e), add),
                                                        PSABlock(int(c2 * e), num_heads=max(int(c2 * e) // 64, 1))))
@@ -202,12 +202,12 @@ class Neck(torch.nn.Module):
     def __init__(self, width, depth, csp):
         super().__init__()
         self.up = torch.nn.Upsample(scale_factor=2)
-        self.h1 = CSP(width[4] + width[5], width[4], depth[5], csp[1])
-        self.h2 = CSP(width[4] + width[4], width[3], depth[5], csp[1])
+        self.h1 = CSP(width[4] + width[5], width[4], depth[5], csp=csp[1])
+        self.h2 = CSP(width[4] + width[4], width[3], depth[5], csp=csp[1])
         self.h3 = Conv(width[3], width[3], torch.nn.SiLU(), k=3, s=2, p=1)
-        self.h4 = CSP(width[3] + width[4], width[4], depth[5], csp[1])
+        self.h4 = CSP(width[3] + width[4], width[4], depth[5], csp=csp[1])
         self.h5 = Conv(width[4], width[4], torch.nn.SiLU(), k=3, s=2, p=1)
-        self.h6 = CSP(width[4] + width[5], width[5], depth[5], csp[1], attn=True)
+        self.h6 = CSP(width[4] + width[5], width[5], csp=csp[1], attn=True)
 
     def forward(self, x):
         p3, p4, p5 = x
