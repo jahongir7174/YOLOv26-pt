@@ -11,21 +11,13 @@ import datetime
 import yaml
 import thop
 import tqdm
-import numpy
 import torch
 
 from nets import nn
 from utils import util
 from utils.dataset import Dataset
 
-data_dir = '../Dataset/COCO'
-
-
-def learning_rate(args, params):
-    def fn(x):
-        return max(1 - x / args.epochs, 0) * (1.0 - params['lrf']) + params['lrf']
-
-    return fn
+data_dir = '/home/jahongir/Projects/Dataset/COCO'
 
 
 def train(args, params):
@@ -38,7 +30,8 @@ def train(args, params):
     params['weight_decay'] *= args.batch_size * args.world_size * args.accumulate / 64
 
     args.date = datetime.datetime.now()
-    optimizer = util.MuSGD(util.set_params(model, params))
+    optimizer = util.MuSGD(util.set_params(model, params['weight_decay']),
+                           lr=params['min_lr'], momentum=params['momentum'])
 
     # EMA
     ema = util.EMA(model) if args.local_rank == 0 else None
@@ -59,12 +52,6 @@ def train(args, params):
                                          args.batch_size, sampler is None, sampler,
                                          num_workers=4, pin_memory=True, collate_fn=Dataset.collate_fn)
 
-    num_steps = len(loader)
-
-    # Scheduler
-    lr = learning_rate(args, params)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr, last_epoch=-1)
-
     if args.distributed:
         # DDP mode
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -74,9 +61,10 @@ def train(args, params):
 
     step = 0
     best = 0
+    num_steps = len(loader)
     amp_scale = torch.amp.GradScaler()
     criterion = util.ComputeLoss(args, params, model)
-    num_warmup = max(round(params['warmup_epochs'] * num_steps), 1000)
+    scheduler = util.LinearLR(args, params, num_steps)
     with open('weights/step.csv', 'w') as log:
         if args.local_rank == 0:
             logger = csv.DictWriter(log, fieldnames=['epoch',
@@ -85,7 +73,6 @@ def train(args, params):
             logger.writeheader()
 
         for epoch in range(args.epochs):
-            scheduler.step()
             model.train()
 
             if args.distributed:
@@ -104,22 +91,7 @@ def train(args, params):
             avg_cls_loss = util.AverageMeter()
             avg_dfl_loss = util.AverageMeter()
             for samples, targets in p_bar:
-
-                # Warmup
-                if step <= num_warmup:
-                    xp = [0, num_warmup]
-                    fp = [1, 64 / (args.world_size * args.batch_size)]
-                    args.accumulate = max(1, int(numpy.interp(num_steps, xp, fp).round()))
-                    for x in optimizer.param_groups:
-                        if x.get("param_group") == "bias":
-                            fp = [params['warmup_bias_lr'], x["initial_lr"] * lr(epoch)]
-                        else:
-                            fp = [0.0, x["initial_lr"] * lr(epoch)]
-                        x["lr"] = numpy.interp(num_steps, xp, fp)
-                        if "momentum" in x:
-                            fp = [params['warmup_momentum'], params['momentum']]
-                            x["momentum"] = numpy.interp(num_steps, xp, fp)
-
+                scheduler.step(step, optimizer)
                 samples = samples.cuda().float() / 255
 
                 # Forward
@@ -182,8 +154,8 @@ def train(args, params):
                 log.flush()
 
                 # Update best mAP
-                if last[0] > best:
-                    best = last[0]
+                if last[1] > best:
+                    best = last[1]
 
                 # Save model
                 save = {'epoch': epoch + 1,
@@ -193,7 +165,7 @@ def train(args, params):
 
                 # Save last, best and delete
                 torch.save(save, f='./weights/last.pt')
-                if best == last[0]:
+                if best == last[1]:
                     torch.save(save, f='./weights/best.pt')
                 del save
 
@@ -210,14 +182,16 @@ def test(args, params, model=None):
             filenames.append(f'{data_dir}/images/val2017/' + filename)
 
     dataset = Dataset(filenames, args.input_size, params, augment=False)
-    loader = torch.utils.data.DataLoader(dataset, args.batch_size,
-                                         shuffle=False, num_workers=4,
+    loader = torch.utils.data.DataLoader(dataset,
+                                         batch_size=4,
+                                         shuffle=False, num_workers=1,
                                          pin_memory=True, collate_fn=Dataset.collate_fn)
 
     plot = False
     if not model:
         plot = True
         model = torch.load(f='./weights/best.pt', map_location='cuda', weights_only=False)
+        print(model['epoch'])
         model = model['model'].float().fuse()
 
     model.half()
@@ -291,9 +265,27 @@ def profile(args, params):
     flops, num_params = thop.profile(model, inputs=[x], verbose=False)
     flops, num_params = thop.clever_format(nums=[2 * flops, num_params], format="%.3f")
 
-    if args.local_rank == 0:
-        print(f'Number of parameters: {num_params}')
-        print(f'Number of FLOPs: {flops}')
+    print(f'Number of parameters: {num_params}')
+    print(f'Number of FLOPs: {flops}')
+
+    if args.benchmark:
+        # Latency
+        model = nn.yolo_v26_n(len(params['names'])).fuse()
+        model.eval()
+        model.cuda()
+
+        x = torch.zeros(shape).cuda()
+        for i in range(10):
+            model(x)
+        total = 0
+        import time
+        for i in range(1_000):
+            start = time.perf_counter()
+            with torch.no_grad():
+                model(x)
+            total += time.perf_counter() - start
+
+        print(f"Latency: {total / 1_000 * 1_000:.3f} ms")
 
 
 def main():
@@ -302,6 +294,7 @@ def main():
     parser.add_argument('--batch-size', default=32, type=int)
     parser.add_argument('--local-rank', default=0, type=int)
     parser.add_argument('--local_rank', default=0, type=int)
+    parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--epochs', default=600, type=int)
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', default=True, action='store_true')

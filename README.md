@@ -25,7 +25,7 @@ pip install tqdm
 
 | Version | Epochs | Box mAP |                                                                              Download |
 |:-------:|:------:|--------:|--------------------------------------------------------------------------------------:|
-|  v26_n  |  600   |    38.1 |                                                            [Model](./weights/best.pt) |
+|  v26_n  |  600   |    38.2 |                                                            [Model](./weights/best.pt) |
 | v26_n*  |   -    |    40.2 | [Model](https://github.com/jahongir7174/YOLOv26-pt/releases/download/v0.0.1/v26_n.pt) |
 | v26_s*  |   -    |    47.6 | [Model](https://github.com/jahongir7174/YOLOv26-pt/releases/download/v0.0.1/v26_s.pt) |
 | v26_m*  |   -    |    52.3 | [Model](https://github.com/jahongir7174/YOLOv26-pt/releases/download/v0.0.1/v26_m.pt) |
@@ -33,18 +33,18 @@ pip install tqdm
 | v26_x*  |   -    |    56.6 | [Model](https://github.com/jahongir7174/YOLOv26-pt/releases/download/v0.0.1/v26_x.pt) |
 
 ```
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.381
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.382
  Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.541
- Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.410
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.190
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.422
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.540
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.318
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.533
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.591
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.380
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.648
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.769
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.413
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.189
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.419
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.551
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.321
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.536
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.596
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.369
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.653
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.781
 ```
 
 * `*` means that it is from original repository, see reference

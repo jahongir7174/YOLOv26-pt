@@ -332,11 +332,40 @@ class YOLO(torch.nn.Module):
         return self
 
 
+class Detector(torch.nn.Module):
+    def __init__(self, width, depth, csp, num_classes):
+        super().__init__()
+        self.backbone = Backbone(width, depth, csp)
+        self.neck = Neck(width, depth, csp)
+
+        img_dummy = torch.zeros(1, width[0], 256, 256)
+        self.head = Head(num_classes, (width[3], width[4], width[5]))
+
+        outputs = self.forward(img_dummy)[0]['x']
+        self.head.stride = torch.tensor([256 / i.shape[-2] for i in outputs])
+        self.stride = self.head.stride
+        self.head.initialize_biases()
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.neck(x)
+        x = self.head(x)
+        return x
+
+    def fuse(self):
+        for m in self.modules():
+            if type(m) is Conv and hasattr(m, 'norm'):
+                m.conv = fuse_conv(m.conv, m.norm)
+                m.forward = m.fuse_forward
+                delattr(m, 'norm')
+        return self
+
+
 def yolo_v26_n(num_classes: int):
     csp = [False, True]
     depth = [1, 1, 1, 1, 1, 1]
     width = [3, 16, 32, 64, 128, 256]
-    return YOLO(width, depth, csp, num_classes)
+    return Detector(width, depth, csp, num_classes)
 
 
 def yolo_v26_t(num_classes: int):
@@ -350,7 +379,7 @@ def yolo_v26_s(num_classes: int):
     csp = [False, True]
     depth = [1, 1, 1, 1, 1, 1]
     width = [3, 32, 64, 128, 256, 512]
-    return YOLO(width, depth, csp, num_classes)
+    return Detector(width, depth, csp, num_classes)
 
 
 def yolo_v26_m(num_classes: int):

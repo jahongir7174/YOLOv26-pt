@@ -244,40 +244,33 @@ def load_weight(model, ckpt):
     return model
 
 
-def set_params(model, params):
-    import re
+def set_params(model, decay):
+    # norm layer types from torch.nn (e.g. BatchNorm, LayerNorm)
+    norm_types = tuple(m for n, m in torch.nn.__dict__.items()
+                       if "Norm" in n and isinstance(m, type))
+    p4 = []
+    p1 = []
+    p2 = []
+    p3 = []
 
-    g = [{}, {}, {}, {}]
-    norm = tuple(v for k, v in torch.nn.__dict__.items() if "Norm" in k)  # type: ignore
-    for module_name, module in model.named_modules():
-        for param_name, param in module.named_parameters(recurse=False):
-            fullname = f"{module_name}.{param_name}" if module_name else param_name
+    for m in model.modules():
+        for name, param in m.named_parameters(recurse=False):
+
             if param.ndim >= 2:
-                g[3][fullname] = param
-            elif "bias" in fullname:
-                g[2][fullname] = param
-            elif isinstance(module, norm):
-                g[1][fullname] = param
+                p4.append(param)
+            elif name.endswith(".bias"):
+                p3.append(param)
+            elif isinstance(m, norm_types):
+                p2.append(param)
             else:
-                g[0][fullname] = param
-    optim_args = dict(lr=params['lr0'], momentum=params['momentum'], nesterov=True)
-    num_params = [len(g[0]), len(g[1]), len(g[2])]  # number of param groups
-    g[2] = {"params": g[2], **optim_args, "param_group": "bias"}
-    g[0] = {"params": g[0], **optim_args, "weight_decay": params['weight_decay'], "param_group": "weight"}
-    g[1] = {"params": g[1], **optim_args, "weight_decay": 0.0, "param_group": "bn"}
-    num_params[0] = len(g[3])  # update number of params
-    g[3] = {"params": g[3], **optim_args, "weight_decay": params['weight_decay'], "use_muon": True,
-            "param_group": "muon"}
+                p1.append(param)
 
-    # higher lr for certain parameters in MuSGD
-    pattern = re.compile(r"(?=.*cls_train)(?=.*cls_head)")
-    g_ = []  # new param groups
-    for x in g:
-        p = x.pop("params")
-        p1 = [v for k, v in p.items() if pattern.search(k)]
-        p2 = [v for k, v in p.items() if not pattern.search(k)]
-        g_.extend([{"params": p1, **x, "lr": params['lr0'] * 3}, {"params": p2, **x}])
-    return g_
+    groups = [{"params": p4, "weight_decay": decay, "param_group": "muon", },
+              {"params": p1, "weight_decay": decay, "param_group": "weight"},
+              {"params": p2, "weight_decay": 0.0, "param_group": "norm"},
+              {"params": p3, "weight_decay": 0.0, "param_group": "bias"}]
+
+    return groups
 
 
 def plot_lr(args, optimizer, scheduler, num_steps):
@@ -696,50 +689,48 @@ class ComputeLoss:
         return max(1 - x / max(self.args.epochs - 1, 1), 0) * (self.b - self.d) + self.d
 
 
-def zeropower_via_newtonschulz5(G, eps=1e-7):
-    assert len(G.shape) == 2
-    X = G.bfloat16()
-    X /= X.norm() + eps  # ensure top singular value <= 1
-    if G.size(0) > G.size(1):
-        X = X.T
-    for a, b, c in [(3.4445, -4.7750, 2.0315),
-                    (3.4445, -4.7750, 2.0315),
-                    (3.4445, -4.7750, 2.0315),
-                    (3.4445, -4.7750, 2.0315),
-                    (3.4445, -4.7750, 2.0315), ]:
-        # for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * A @ A
-        X = a * X + B @ X
-    if G.size(0) > G.size(1):
-        X = X.T
-    return X
+def orthogonalize(grad, eps=1e-7):
+    """
+    Newton-Schulz orthogonalization
+    """
+    if grad.ndim != 2:
+        raise ValueError(f"Expected a 2-D tensor, got shape {grad.shape}")
+
+    x = grad.bfloat16()
+    x = x / (x.norm() + eps)  # scale so top singular value ≤ 1
+
+    transposed = grad.size(0) > grad.size(1)
+    if transposed:
+        x = x.T  # work in wide form (rows ≤ cols)
+
+    for a, b, c in [(3.4445, -4.7750, 2.0315), ] * 5:
+        A = x @ x.T
+        x = a * x + (b * A + c * (A @ A)) @ x
+
+    if transposed:
+        x = x.T
+
+    return x
 
 
-def muon_update(grad, momentum, beta: float = 0.95, nesterov: bool = True):
-    momentum.lerp_(grad, 1 - beta)
-    update = grad.lerp(momentum, beta) if nesterov else momentum
-    if update.ndim == 4:  # for the case of conv filters
-        update = update.view(len(update), -1)
-    update = zeropower_via_newtonschulz5(update)
-    update *= max(1, grad.size(-2) / grad.size(-1)) ** 0.5
-    return update
+def muon_update(grad, momentum_buf, beta):
+    momentum_buf.lerp_(grad, 1 - beta)
+    update = grad.lerp(momentum_buf, beta)
+
+    # Flatten conv filters from (out, in, kH, kW) → (out, in·kH·kW)
+    if update.ndim == 4:
+        update = update.view(update.size(0), -1)
+
+    update = orthogonalize(update)
+
+    # Scale so that wider matrices don't shrink the effective update norm
+    aspect_scale = max(1.0, grad.size(-2) / grad.size(-1)) ** 0.5
+    return update * aspect_scale
 
 
 class MuSGD(torch.optim.Optimizer):
-    def __init__(self, params,
-                 lr: float = 1e-3,
-                 momentum: float = 0.0,
-                 weight_decay: float = 0.0,
-                 nesterov: bool = False,
-                 use_muon: bool = False,
-                 muon: float = 0.1,
-                 sgd: float = 1.0, ):
-        defaults = dict(lr=lr,
-                        momentum=momentum,
-                        weight_decay=weight_decay,
-                        nesterov=nesterov,
-                        use_muon=use_muon, )
+    def __init__(self, params, lr, momentum, muon=0.1, sgd=1.0):
+        defaults = dict(lr=lr, momentum=momentum)
         super().__init__(params, defaults)
         self.muon = muon
         self.sgd = sgd
@@ -752,49 +743,54 @@ class MuSGD(torch.optim.Optimizer):
                 loss = closure()
 
         for group in self.param_groups:
-            # Muon
-            if group["use_muon"]:
-                # generate weight updates in distributed fashion
-                for p in group["params"]:
-                    lr = group["lr"]
-                    if p.grad is None:
-                        continue
-                    grad = p.grad
-                    state = self.state[p]
-                    if len(state) == 0:
-                        state["momentum_buffer"] = torch.zeros_like(p)
-                        state["momentum_buffer_SGD"] = torch.zeros_like(p)
+            lr = group["lr"]
+            momentum = group["momentum"]
+            weight_decay = group["weight_decay"]
 
-                    update = muon_update(grad, state["momentum_buffer"],
-                                         beta=group["momentum"], nesterov=group["nesterov"])
-                    p.add_(update.reshape(p.shape), alpha=-(lr * self.muon))
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
 
-                    # SGD update
-                    if group["weight_decay"] != 0:
-                        grad = grad.add(p, alpha=group["weight_decay"])
-                    state["momentum_buffer_SGD"].mul_(group["momentum"]).add_(grad)
-                    sgd_update = (
-                        grad.add(state["momentum_buffer_SGD"], alpha=group["momentum"])
-                        if group["nesterov"]
-                        else state["momentum_buffer_SGD"]
-                    )
-                    p.add_(sgd_update, alpha=-(lr * self.sgd))
-            else:  # SGD
-                for p in group["params"]:
-                    lr = group["lr"]
-                    if p.grad is None:
-                        continue
-                    grad = p.grad
-                    if group["weight_decay"] != 0:
-                        grad = grad.add(p, alpha=group["weight_decay"])
-                    state = self.state[p]
-                    if len(state) == 0:
-                        state["momentum_buffer"] = torch.zeros_like(p)
-                    state["momentum_buffer"].mul_(group["momentum"]).add_(grad)
-                    update = (
-                        grad.add(state["momentum_buffer"], alpha=group["momentum"])
-                        if group["nesterov"]
-                        else state["momentum_buffer"]
-                    )
-                    p.add_(update, alpha=-lr)
+                grad = p.grad
+                state = self.state[p]
+
+                if group["param_group"] == "muon":
+                    self._muon_step(p, grad, state, lr, momentum, weight_decay)
+                else:
+                    self._sgd_step(p, grad, state, lr, momentum, weight_decay)
+
         return loss
+
+    def _init_muon_state(self, p):
+        self.state[p]["momentum_buffer_muon"] = torch.zeros_like(p)
+        self.state[p]["momentum_buffer_sgd"] = torch.zeros_like(p)
+
+    def _init_sgd_state(self, p):
+        self.state[p]["momentum_buffer"] = torch.zeros_like(p)
+
+    def _muon_step(self, p, grad, state, lr, momentum, weight_decay):
+        if not state:
+            self._init_muon_state(p)
+
+        # --- Muon component ---
+        muon_update_val = muon_update(grad, state["momentum_buffer_muon"], momentum)
+        p.add_(muon_update_val.reshape(p.shape), alpha=-(lr * self.muon))
+
+        # --- SGD component (with optional weight decay) ---
+        grad_wd = grad.add(p, alpha=weight_decay) if weight_decay != 0 else grad
+
+        buf = state["momentum_buffer_sgd"]
+        buf.mul_(momentum).add_(grad_wd)
+        sgd_update = grad_wd.add(buf, alpha=momentum)
+        p.add_(sgd_update, alpha=-(lr * self.sgd))
+
+    def _sgd_step(self, p, grad, state, lr, momentum, weight_decay):
+        if not state:
+            self._init_sgd_state(p)
+
+        grad_wd = grad.add(p, alpha=weight_decay) if weight_decay != 0 else grad
+
+        buf = state["momentum_buffer"]
+        buf.mul_(momentum).add_(grad_wd)
+        update = grad_wd.add(buf, alpha=momentum)
+        p.add_(update, alpha=-lr)

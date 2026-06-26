@@ -1,25 +1,23 @@
-lr0: 0.0100000000000000            # initial learning rate (SGD=1E-2, Adam=1E-3)
-lrf: 0.0100000000000000            # final OneCycleLR learning rate (lr0 * lrf)
-momentum: 0.93700000000            # SGD momentum/Adam beta1
-weight_decay: 0.0005000            # optimizer weight decay
-warmup_epochs: 3.000000            # warmup epochs
-warmup_momentum: 0.8000            # warmup initial momentum
-warmup_bias_lr: 0.10000            # warmup initial bias lr
-box: 7.5000000000000000            # box loss gain
-cls: 0.5000000000000000            # cls loss gain
-dfl: 9.0000000000000000            # dfl loss gain
-hsv_h: 0.01500000000000            # image HSV-Hue augmentation (fraction)
-hsv_s: 0.70000000000000            # image HSV-Saturation augmentation (fraction)
-hsv_v: 0.40000000000000            # image HSV-Value augmentation (fraction)
-scale: 0.50000000000000            # image scale (+/- gain)
-shear: 0.00000000000000            # image shear (+/- deg)
-degrees: 0.000000000000            # image rotation (+/- deg)
-translate: 0.1000000000            # image translation (+/- fraction)
-perspective: 0.00000000            # image perspective (+/- fraction)
-flip_ud: 0.000000000000            # image flip up-down (probability)
-flip_lr: 0.500000000000            # image flip left-right (probability)
-mosaic: 1.0000000000000            # image mosaic (probability)
-mix_up: 0.000000000000            # image mix-up (probability)
+min_lr: 0.00010000000000000            # initial learning rate
+max_lr: 0.01000000000000000            # maximum learning rate
+momentum: 0.937000000000000            # SGD momentum/Adam beta1
+weight_decay: 0.00050000000            # optimizer weight decay
+warmup_epochs: 3.0000000000            # warmup epochs
+box: 7.50000000000000000000            # box loss gain
+cls: 0.50000000000000000000            # cls loss gain
+dfl: 9.00000000000000000000            # dfl loss gain
+hsv_h: 0.015000000000000000            # image HSV-Hue augmentation (fraction)
+hsv_s: 0.700000000000000000            # image HSV-Saturation augmentation (fraction)
+hsv_v: 0.400000000000000000            # image HSV-Value augmentation (fraction)
+scale: 0.500000000000000000            # image scale (+/- gain)
+shear: 0.000000000000000000            # image shear (+/- deg)
+degrees: 0.0000000000000000            # image rotation (+/- deg)
+translate: 0.10000000000000            # image translation (+/- fraction)
+perspective: 0.000000000000            # image perspective (+/- fraction)
+flip_ud: 0.0000000000000000            # image flip up-down (probability)
+flip_lr: 0.5000000000000000            # image flip left-right (probability)
+mosaic: 1.00000000000000000            # image mosaic (probability)
+mix_up: 0.00000000000000000            # image mix-up (probability)
 names:
   0: person
   1: bicycle
